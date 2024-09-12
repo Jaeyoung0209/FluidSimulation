@@ -1,0 +1,183 @@
+#pragma kernel CSMain
+
+//compute shader that collects info about particles and their densities to calculate the resulting force
+
+struct particle
+{
+    float mass;
+    float2 position;
+    float2 velocity;
+    float2 force;
+};
+
+RWStructuredBuffer<particle> particles;
+StructuredBuffer<float> densities;
+//StructuredBuffer<float2> colorGradients;
+
+float influenceRange;
+float pressureConstant;
+float targetDensity;
+float gravityConstant;
+
+float deltaTime;
+float boxSize;
+float collisionDamping;
+
+float viscosity;
+float2 inputPosition;
+float inputRadius;
+
+//float surfaceConstant;
+
+float CalculatePressure(float density)
+{
+    return pressureConstant * (density - targetDensity);
+}
+
+float GetDistance(float2 u, float2 v)
+{
+    return sqrt(pow((u[0] - v[0]), 2) + pow((u[1] - v[1]), 2));
+
+}
+
+float2 DerivativeSmoothingKernel(float2 u, float2 v)
+{
+    float2 r_vec = u - v;
+    float r = GetDistance(u, v);
+    float q = r / influenceRange;
+    float a = 10 / (7 * 3.14159265358 * pow(influenceRange, 2));
+    
+    if (0 <= q && q < 1)
+    {
+        return a * ((-3 * q / pow(influenceRange, 2)) + ((9 * pow(q, 2)) / (4 * pow(influenceRange, 2)))) * (r_vec / r);
+
+    }
+    else if (1 <= q && q < 2)
+    {
+        return a * (-3 * pow((2 - q), 2) / (4 * pow(influenceRange, 2))) * (r_vec / r);
+
+    }
+    else
+    {
+        return float2(0, 0);
+    }
+
+}
+
+float LaplacianSmoothingKernel(float r)
+{
+    float q = r / influenceRange;
+    float a = 10 / (7 * 3.14159265358 * pow(influenceRange, 2));
+    
+    if (0 <= q && q < 1)
+    {
+        return a * ((3 / pow(influenceRange, 2)) + ((9 * r) / (2 * pow(influenceRange, 3))));
+    }
+    else if (1 <= q && q < 2)
+    {
+        return a * ((3 / (2 * pow(influenceRange, 2))) * (2 - (r / influenceRange)));
+    }
+    else
+    {
+        return 0;
+    }
+
+}
+
+float2 DerivativeSmoothingKernel2(float2 u, float2 v)
+{
+    float2 r_vec = u - v;
+    float r = GetDistance(u, v);
+    float2 dirVector = r_vec / r;
+    
+    if (r >= influenceRange)
+        return 0;
+    float scale = 12 / (pow(influenceRange, 4) * 3.14159265358);
+    return (r - influenceRange) * scale * dirVector;
+
+}
+
+
+float2 CalculateNetForce(uint particleIndex)
+{
+    particle currParticle = particles[particleIndex];
+    float2 pressureForce = float2(0, 0);
+    
+    uint p;
+    uint stride;
+    particles.GetDimensions(p, stride);
+    
+    float currDensity = densities[particleIndex];
+    //float currDensity = CalculateDensity(currParticle.position);
+    float currPressure = CalculatePressure(currDensity);
+    //float2 curvature = float2(0, 0);
+    
+    for (uint i = 0; i < p; i++)
+    {
+        if (particleIndex != i && (currParticle.position[0] != particles[i].position[0] || currParticle.position[1] != particles[i].position[1]))
+        {
+            particle otherParticle = particles[i];
+            float otherDensity = densities[i];
+            //float otherDensity = CalculateDensity(otherParticle.position);
+            float otherPressure = CalculatePressure(otherDensity);
+            float2 slope = DerivativeSmoothingKernel(otherParticle.position, currParticle.position);
+            pressureForce += otherParticle.mass * ((currPressure / pow(currDensity, 2)) + (otherPressure / pow(otherDensity, 2))) * slope;
+            
+            //viscosity
+            pressureForce += otherParticle.mass * ((otherParticle.velocity - currParticle.velocity) / otherDensity) * LaplacianSmoothingKernel(GetDistance(currParticle.position, otherParticle.position));
+            
+            //surface tension
+            //curvature += otherParticle.mass * (colorGradients[i] - colorGradients[particleIndex]) * slope / otherPressure;
+        }
+    }
+    
+    //curvature *= colorGradients[particleIndex] * surfaceConstant;
+    
+    
+    return viscosity * pressureForce;
+}
+
+float2 ApplyGravity(float2 position, float2 velocity)
+{
+    return position + (velocity + float2(0, -1) * gravityConstant * deltaTime) * deltaTime;
+
+}
+
+float2 CalculateInputForce(uint particleIndex)
+{
+    float2 offset = inputPosition - particles[particleIndex].position;
+    float sqrDistance = pow(offset[0], 2) + pow(offset[1], 2);
+    float2 interactionforce = float2(0, 0);
+    
+    if (sqrDistance < pow(inputRadius, 2))
+    {
+        float distance = sqrt(sqrDistance);
+        float2 dirToInput = offset / distance;
+        float center = 1 - distance / inputRadius;
+        interactionforce = (dirToInput * 80 - particles[particleIndex].velocity) * center;
+    }
+    return interactionforce;
+}
+
+
+[numthreads(10,1,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    particle p;
+    p.mass = particles[id.x].mass;
+    p.position = particles[id.x].position;
+    p.velocity = particles[id.x].velocity + float2(0, -1) * gravityConstant * deltaTime;
+    particles[id.x].position = ApplyGravity(p.position, particles[id.x].velocity);
+    p.force = CalculateNetForce(id.x);
+    if (abs(inputPosition[0]) < boxSize && abs(inputPosition[1]) < boxSize)
+        p.force += CalculateInputForce(id.x);
+    
+    particles[id.x] = p;
+    
+    
+    //particle p;
+    //p.mass = particles[id.x].mass;
+    //p.position = particles[id.x].position;
+    //p.force = CalculatePressureForce(id.x);
+    //particles[id.x] = p;
+}

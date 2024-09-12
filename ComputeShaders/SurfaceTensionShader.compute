@@ -1,0 +1,121 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+struct particle
+{
+    float mass;
+    float2 position;
+    float2 velocity;
+    float2 force;
+};
+
+struct cgData
+{
+    float x;
+    float y;
+};
+
+RWStructuredBuffer<cgData> colorGradients;
+StructuredBuffer<float> densityBuffer;
+StructuredBuffer<particle> particles;
+
+float influenceRange;
+float targetDensity;
+float pressureConstant;
+
+float CalculatePressure(float density)
+{
+    return pressureConstant * max(0, (density - targetDensity));
+}
+
+float GetDistance(float2 u, float2 v)
+{
+    return sqrt(pow((u[0] - v[0]), 2) + pow((u[1] - v[1]), 2));
+
+}
+
+float2 DerivativeSmoothingKernel(float2 u, float2 v)
+{
+    float2 r_vec = u - v;
+    float r = GetDistance(u, v);
+    float q = r / influenceRange;
+    float a = 10 / (7 * 3.14159265358 * pow(influenceRange, 2));
+    
+    if (0 <= q && q < 1)
+    {
+        return a * ((-3 * q / pow(influenceRange, 2)) + ((9 * pow(q, 2)) / (4 * pow(influenceRange, 2)))) * (r_vec / r);
+
+    }
+    else if (1 <= q && q < 2)
+    {
+        return a * (-3 * pow((2 - q), 2) / (4 * pow(influenceRange, 2))) * (r_vec / r);
+
+    }
+    else
+    {
+        return float2(0, 0);
+    }
+
+}
+
+float2 DerivativeSmoothingKernel2(float2 u, float2 v)
+{
+    float2 r_vec = u - v;
+    float r = GetDistance(u, v);
+    float2 dirVector = r_vec / r;
+    
+    if (r >= influenceRange)
+        return 0;
+    float scale = 12 / (pow(influenceRange, 4) * 3.14159265358);
+    return dirVector;
+
+}
+
+
+cgData CalculateColorGradient(float density, uint index)
+{
+    uint p;
+    uint stride;
+    densityBuffer.GetDimensions(p, stride);
+    
+    cgData colorGradient;
+    colorGradient.x = 0;
+    colorGradient.y = 0;
+
+    particle currParticle = particles[index];
+    
+    for (uint i = 0; i < p; i++)
+    {
+        if (i != index)
+        {
+        
+            float2 val = currParticle.mass * (densityBuffer[i] - density) * DerivativeSmoothingKernel(particles[i].position, currParticle.position) / CalculatePressure(densityBuffer[i]);
+            colorGradient.x += val[0];
+            colorGradient.y += val[1];
+        }
+    }
+    
+    float magnitude = (sqrt(pow(colorGradient.x, 2) + pow(colorGradient.y, 2)));
+    
+    if (magnitude <= 0)
+    {
+        cgData zero;
+        zero.x = 0;
+        zero.y = 0;
+        return zero;
+    }
+    
+    colorGradient.x /= magnitude;
+    colorGradient.y /= magnitude;
+
+    
+    return colorGradient;
+
+}
+
+[numthreads(10,1,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    colorGradients[id.x] = CalculateColorGradient(densityBuffer[id.x], id.x);
+    
+}

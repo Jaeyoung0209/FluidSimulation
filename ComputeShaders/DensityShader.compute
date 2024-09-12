@@ -1,0 +1,76 @@
+#pragma kernel CSMain
+
+//compute shader for pre-calculating desnities for all particles, optimizing the calculation for gradient
+
+struct particle
+{
+    float mass;
+    float2 position;
+    float2 velocity;
+    float2 force;
+};
+
+RWStructuredBuffer<float> densityBuffer;
+StructuredBuffer<particle> particles;
+
+float influenceRange;
+
+float GetDistance(float2 u, float2 v)
+{
+    return sqrt(pow((u[0] - v[0]), 2) + pow((u[1] - v[1]), 2));
+
+}
+
+float SmoothingKernel(float r)
+{
+    float q = r / influenceRange;
+    float a = 10 / (7 * 3.14159265358 * pow(influenceRange, 2));
+    
+    if (0 <= q && q < 1)
+    {
+        return a * (1 - (3 / 2) * pow(q, 2) + (3 / 4) * pow(q, 3));
+
+    }
+    else if (1 <= q && q < 2)
+    {
+        return a * ((1 / 4) * pow((2 - q), 3));
+
+    }
+    else
+    {
+        return 0;
+    }
+}
+
+float SmoothingKernel2(float r)
+{
+    if (r >= influenceRange)
+        return 0;
+    float volume = (3.14159265358 * pow(influenceRange, 4)) / 6;
+    return pow((influenceRange - r), 2) / volume;
+
+}
+
+float CalculateDensity(float2 position)
+{
+    uint p;
+    uint stride;
+    particles.GetDimensions(p, stride);
+    
+    float density = 0;
+    
+    for (uint i = 0; i < p; i++)
+    {
+        particle otherParticle = particles[i];
+        density += otherParticle.mass * SmoothingKernel(GetDistance(position, otherParticle.position));
+    }
+    
+    return density;
+}
+
+[numthreads(10,1,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    float densityValue = CalculateDensity(particles[id.x].position);
+    densityBuffer[id.x] = densityValue;
+}
