@@ -6,6 +6,5 @@ This project is a fluid simulator built in Unity through the Smooth Particle Hyd
 * Viscosity
 
 
-
-https://github.com/user-attachments/assets/5168d185-4ef0-4cb0-b99f-078b58975107
+https://github.com/user-attachments/assets/af9962d4-39e7-4692-bb2f-68290f132567
 
