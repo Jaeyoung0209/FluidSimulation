@@ -18,4 +18,4 @@ This is a clip of a simulation with the same number of particles, but triple the
 
 https://github.com/user-attachments/assets/9ac87623-6291-4c10-af37-18d4b60c6e07
 
-The difference between how the body of fluid behaves when the droplet that has been picked up is pushed down highlights the difference made by the change in visocity. 
+The difference between how the body of fluid behaves when the droplet that has been picked up is pushed down highlights the difference made by the change in viscosity. The velocities of particles in high-viscosity setting are less affected by the movement of surrounding particles, which makes sense considering the definition of viscosity is the measure of fluid's resistance to flow.
